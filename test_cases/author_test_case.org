@@ -1,0 +1,37 @@
+#+TITLE: Tolkien
+
+* [ ] J. R. R. Tolkien
+:PROPERTIES:
+:END:
+** [ ] The Hobbit [1/1]
+:PROPERTIES:
+:AUTHOR: J. R. R. Tolkien
+:ID: 744429718141913008
+:END:
+*** [X] Highlight
+CLOSED: [2020-07-08 Wed 19:58]
+:PROPERTIES:
+:LOCATION: 228-229
+:HIGHLIGHT: “Of course!” said Bilbo, and sat down in a hurry. He missed the stool and sat in the fender,
+:CREATION_DATE: 2019-11-23 16:56:55
+:END:
+
+** [ ] The Lord of the Rings [/]
+:PROPERTIES:
+:AUTHOR: J. R. R. Tolkien
+:ID: 553394003499142966
+:END:
+*** [ ] Highlight
+:PROPERTIES:
+:LOCATION: 15639-15640
+:HIGHLIGHT: lost. Make haste!’ Flinging on some clothes, Merry looked outside. The world was darkling.
+:CREATION_DATE: 2019-09-23 20:09:21
+:END:
+
+*** [ ] Note
+:PROPERTIES:
+:LOCATION: 16415-16415
+:NOTE: Translate
+:HIGHLIGHT: dwimmerlaik,
+:CREATION_DATE: 2019-09-25 22:59:56
+:END:

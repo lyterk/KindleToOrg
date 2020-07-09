@@ -1,0 +1,8 @@
+.zsh_history
+.zhistory
+.mypy_cache
+__pycache__/
+*.pyc
+Pipfile.lock
+.dir-locals.el
+books.org
