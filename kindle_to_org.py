@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-# TODO FIXME
-from pprint import pprint
-
 import getopt
 import re
 import sys
@@ -467,8 +464,6 @@ class Author(BaseOrg):
         this.properties["creation_date"] = this.creation_date
         sorted_children = sorted([b for b in self.books.values()])
         children = "\n".join([b.to_org(this.level + 1) for b in sorted_children])
-        # if this.author_name == "John Bolton;":
-        #     pprint([i.selection for j in self.books.values() for i in j.annotations])
         return super(Author, this).__str__() + "\n" + children
 
     def calc_progress(self) -> Progress:
