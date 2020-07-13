@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import getopt
+import re
+import sys
+
 from collections import defaultdict
+from copy import copy
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, date
 from enum import Enum
 from fractions import Fraction
 from hashlib import sha256, md5
 from itertools import islice, groupby
 from math import inf
-from re import sub as re_sub, findall as re_findall
 from orgparse import loads as org_loads
 from orgparse.node import OrgNode
 from os import path, environ
 from pathlib import Path
-from sys import maxsize
 from typing import (
     List,
     Dict,
@@ -30,172 +33,28 @@ from typing import (
     ByteString,
 )
 
-
-# Static constants
-file_location = path.expanduser("~/org/resources/kindle_clippings.txt")
-KINDLE_SEPARATOR: str = "=========="
-
-# Type definitions
-PageRange = Tuple[Union[str, int], Optional[Union[str, int]]]
-LocationRange = Tuple[int, Optional[int]]
-DateTime = datetime
-Hash = int
-Heading = str
-BookTitle = str
-AuthorName = str
-Series = str
-IsNoteCollated = bool
-Properties = Dict[str, Any]
-# Create a generic variable that can be 'Parent', or any subclass.
+from base_org import BaseOrg, EmacsDateTime, EmacsDate, Todo, Progress
+from static import (
+    AuthorName,
+    BookTitle,
+    LocationRange,
+    PageRange,
+    Heading,
+    IsNoteCollated,
+    Properties,
+    Series,
+    KINDLE_SEPARATOR,
+)
+from utility_functions import roman_to_float, utf8
 
 
-# Enums
 class AType(Enum):
     Highlight = "Highlight"
     Note = "Note"
     Bookmark = "Bookmark"
 
 
-S = TypeVar("S", bound="Todo")
-
-
-class Todo(Enum):
-    Unchecked = "[ ]"
-    Checked = "[X]"
-    CheckStart = "[-]"
-    CheckWait = "[?]"
-    Todo = "TODO"
-    Strt = "STRT"
-    Proj = "PROJ"
-    Wait = "WAIT"
-    Hold = "HOLD"
-    Done = "DONE"
-    Kill = "KILL"
-    NoTodo = ""
-
-    def _merge(self: S, other: S) -> S:
-        """Define a concrete order for todo values, always pick the more advanced one
-        for merge conflicts."""
-        order = [
-            "",
-            "[ ]",
-            "[-]",
-            "[?]",
-            "[X]",
-            "TODO",
-            "STRT",
-            "PROJ",
-            "WAIT",
-            "HOLD",
-            "DONE",
-            "KILL",
-        ]
-
-        if order.index(self.value) < order.index(other.value):
-            # advance the status to a higher stage of completion.
-            return other
-        else:
-            # for explicitness
-            return self
-
-
-# Utility functions
-def parse_todo(node: OrgNode) -> Tuple[Todo, Heading]:
-    if node.todo:
-        return (Todo(node.todo), node.heading)
-    else:
-        if node.heading.startswith("["):
-            try:
-                return (Todo(node.heading[0:3]), node.heading[5:])
-            except ValueError:
-                raise Exception(
-                    f"This org node does not have a valid todo action: {node.heading[0:3]}"
-                )
-        else:
-            return (Todo.NoTodo, node.heading)
-
-
-def window(seq: Iterable, n=2) -> Iterable:
-    "Returns a sliding window (of width n) over data from the iterable"
-    "   s -> (s0,s1,...s[n-1]), (s1,s2,...,sn), ...                   "
-    it = iter(seq)
-    result = tuple(islice(it, n))
-    if len(result) == n:
-        yield result
-    for elem in it:
-        result = result[1:] + (elem,)
-        yield result
-
-
-utf8: Callable[[Any], ByteString] = lambda o: bytes(str(o), "utf-8")
-
-
-def nested_set(dic, keys, value):
-    for key in keys[:-1]:
-        dic = dic.setdefault(key, {})
-    dic[keys[-1]] = value
-
-
-def write_properties(d: Dict[str, Union[int, str]]) -> str:
-    props = [f":{key.upper()}: {value}" for key, value in d.items() if value]
-    if len(props) > 0:
-        props = "\n" + "\n".join(props) + "\n"
-    else:
-        props = "\n"
-    return f"\n:PROPERTIES:{props}:END:\n"
-
-
-def roman_to_float(s: Optional[Union[str, int]]) -> Optional[Union[Fraction, int]]:
-    """If it's actually an int, or None, pop it back out, otherwise turn it to a
-float that's 1/100th of its roman value so it sorts at the bottom."""
-    if isinstance(s, int):
-        return s
-
-    if not s:
-        return None
-
-    rom_val = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
-    int_val = 0
-    s = s.upper()
-    for i in range(len(s)):
-        if i > 0 and rom_val.get(s[i], -maxsize) > rom_val.get(s[i - 1], -maxsize):
-            int_val += rom_val.get(s[i], -maxsize) - 2 * rom_val.get(s[i - 1], -maxsize)
-        else:
-            int_val += rom_val.get(s[i], -maxsize)
-
-    if int_val < 0:
-        # Not a roman numeral, treat as invalid input
-        return None
-
-    return Fraction(int_val, 10_000)
-
-
-W = TypeVar("W", bound="BaseOrg")
-
-
-@dataclass
-class BaseOrg:
-    status: Optional[Todo] = Todo.Unchecked
-    body: Optional[str] = ""
-    other_props: Dict[str, Any] = field(default_factory=dict)
-
-    def _org_merge(self, other: BaseOrg) -> None:
-        self_todo, other_todo = self.status or Todo.NoTodo, other.status or Todo.NoTodo
-        final_status = self_todo._merge(other_todo)
-
-        sbody, obody = self.body or "", other.body or ""
-        if sbody.strip() == obody.strip():
-            final_body: str = sbody.strip()
-        else:
-            final_body = sbody.strip() + obody.strip()
-
-        final_props = {**self.other_props, **other.other_props}
-        self.status = final_status
-        self.body = final_body
-        self.other_props = final_props
-
-
-T = TypeVar("T", bound="Annotation")
+N = TypeVar("N", bound="Annotation")
 
 
 @dataclass
@@ -206,22 +65,23 @@ class Annotation(BaseOrg):
     series: Optional[Series] = None
     page_number: Optional[PageRange] = None
     location: Optional[LocationRange] = None
-    creation_date: DateTime = datetime.now()
+    # Ignore this datetime.now, it never applies.
+    creation_date: EmacsDateTime = datetime.now()
     selection: Optional[str] = None
     my_note: Optional[str] = None
 
-    def __lt__(self, other) -> bool:
+    def __lt__(self, other: N) -> bool:
         """For sorting"""
         if self.author != other.author:
             return self.author.lower() < other.author.lower()
 
         rex = r"^the |a "
-        self_title = re_sub(rex, "", self.title.lower())
-        other_title = re_sub(rex, "", other.title.lower())
+        self_title = re.sub(rex, "", self.title.lower())
+        other_title = re.sub(rex, "", other.title.lower())
         if self_title != other_title:
             return self_title < other_title
 
-        neg_inf: int = -maxsize
+        neg_inf: int = -sys.maxsize
         if self.page_number != other.page_number:
             if self.page_number:
                 self_page = roman_to_float(self.page_number[0]) or -1
@@ -271,11 +131,11 @@ class Annotation(BaseOrg):
             self.body,
         ]:
             m.update(utf8(f))
-        for k, v in self.other_props.items():
+        for k, v in self.properties.items():
             m.update(utf8(str(k) + str(v)))
         return int(m.hexdigest(), 16)
 
-    def _merge_note_with_highlight(
+    def merge_note_with_highlight(
         self, previous: Optional[Annotation]
     ) -> Tuple[IsNoteCollated, Annotation]:
         """Notes are sometimes (but it seems not always) followed by a
@@ -309,7 +169,7 @@ class Annotation(BaseOrg):
         return is_collated, self
 
     @classmethod
-    def from_kindle(cls: Type[T], raw_kindle: str) -> T:
+    def from_kindle(cls: Type[N], raw_kindle: str) -> N:
         # Long version: - Your Highlight on page 253 | Location 3870-3870 | Added on Sunday, September 16, 2018 10:39:43 PM
         # Short version bookmark: - Your Bookmark on page 216 | Added on Monday, August 13, 2018 8:47:47 PM
         # Short version highlight: - Your Highlight on Location 1430-1432 | Added on Thursday, June 11, 2020 11:34:35 PM
@@ -317,6 +177,7 @@ class Annotation(BaseOrg):
         metadata_items = [i.strip() for i in lines[1].split("|")]
         page_loc: str = metadata_items[0]
         atype: Optional[AType] = None
+        status: Todo = Todo.Unchecked
         creation_date: Optional[datetime] = None
         selection: Optional[str] = None
         my_note: Optional[str] = None
@@ -342,27 +203,28 @@ class Annotation(BaseOrg):
             selection = "\n".join(remaining).strip() if remaining else None
 
         if len(metadata_items) == 2:
-            creation_date = get_date(metadata_items[1])
+            creation_date = EmacsDateTime.kindle_strptime(metadata_items[1])
             if "Location" in page_loc:
                 location = page_or_location(page_loc)
             elif "page" in page_loc:
                 page_number = page_or_location(page_loc)
 
         elif len(metadata_items) >= 3:
+            creation_date = EmacsDateTime.kindle_strptime(metadata_items[2])
             loc_str = metadata_items[1]
 
             page_number = page_or_location(page_loc)
             location = page_or_location(loc_str)
-            creation_date = get_date(metadata_items[2])
 
         if not creation_date:
             raise Exception("No creation date provided, that's weird")
 
-        annotation: T = cls(
+        annotation: N = cls(
             atype=atype,
             title=title,
             author=author,
             series=series,
+            status=status,
             page_number=page_number,
             location=location,
             creation_date=creation_date,
@@ -372,40 +234,55 @@ class Annotation(BaseOrg):
         return annotation
 
     def to_org(self, depth: int) -> str:
-        props = {}
-        if self.page_number:
-            lp, rp = self.page_number
+        this = copy(self)
+        if this.page_number:
+            lp, rp = this.page_number
             if lp or rp:
                 if lp and rp:
-                    props["page"] = f"{lp}-{rp}"
+                    this.properties["page"] = f"{lp}-{rp}"
                 else:
-                    props["page"] = f"{lp}"
+                    this.properties["page"] = f"{lp}"
 
-        if self.location:
-            ll, rl = self.location
+        if this.location:
+            ll, rl = this.location
             if ll or rl:
                 if ll and rl:
-                    props["location"] = f"{ll}-{rl}"
+                    this.properties["location"] = f"{ll}-{rl}"
                 else:
-                    props["location"] = f"{ll}"
+                    this.properties["location"] = f"{ll}"
 
-        props["note"] = self.my_note
-        props["highlight"] = self.selection
-        props["creation_date"] = str(self.creation_date)
-        all_props = {**props, **self.other_props}
-        # checkbox = f"{'[ ]' if self.atype != AType.Bookmark else ''}"
-        return f"""{'*' * depth} {self.status.value} {self.atype.name}{write_properties(props)}{self.body}"""
+        this.properties["note"] = this.my_note
+        this.properties["highlight"] = this.selection
+        this.properties["creation_date"] = str(this.creation_date)
+        this.properties["title"] = this.title
+        this.properties["author"] = this.author
+        this.heading = this.atype.name
+
+        if this.series:
+            this.properties["series"] = this.series
+
+        this.level = depth
+        return super(Annotation, this).__str__()
 
     @classmethod
-    def from_org(cls: Type[T], node: OrgNode) -> T:
-        status, atype = parse_todo(node)
+    def from_org(cls: Type[N], node: OrgNode) -> N:
+        status, heading = super().parse_heading(node)
+        atype = AType(heading)
         props = node.properties
         title: BookTitle = props.get("TITLE")
         author: AuthorName = props.get("AUTHOR")
         series: Optional[Series] = props.get("SERIES")
-        creation_date: DateTime = datetime.fromisoformat(props.get("CREATION_DATE"))
+        try:
+            creation_date: EmacsDateTime = datetime.fromisoformat(
+                props.get("CREATION_DATE")
+            )
+        except:
+            print("Couldn't parse creation date: " + props.get("CREATION_DATE"))
         page: Optional[PageRange] = page_or_location(props.get("PAGE"))
         location: Optional[LocationRange] = page_or_location(props.get("LOCATION"))
+        creation_date: Optional[EmacsDateTime] = EmacsDateTime.org_strptime(
+            props.get("CREATION_DATE")
+        )
         selection: Optional[str] = props.get("HIGHLIGHT")
         my_note: Optional[str] = props.get("NOTE")
         # Remove redundant props from props dict
@@ -424,7 +301,7 @@ class Annotation(BaseOrg):
             except KeyError:
                 pass
         return cls(
-            atype=AType(atype),
+            atype=status,
             title=title,
             author=author,
             series=series,
@@ -433,13 +310,13 @@ class Annotation(BaseOrg):
             selection=selection,
             my_note=my_note,
             creation_date=creation_date,
-            status=Todo(node.todo),
+            status=status,
             body=node.body if node.body else None,
-            other_props=props,
+            properties=props,
         )
 
 
-U = TypeVar("U", bound="Book")
+B = TypeVar("B", bound="Book")
 
 
 @dataclass
@@ -458,33 +335,44 @@ class Book(BaseOrg):
             m.update(utf8(ah))
         return int(m.hexdigest(), 16)
 
-    def __repr__(self):
-        atypes = [
-            i.name
-            for i in sorted([i.atype for i in self.annotations], key=lambda a: a.value)
-        ]
-        groups = groupby(atypes)
-        friendly = {k: len(list(g)) for k, g in groups}
-        return f"Book(title: {self.title}, total: {len(atypes)}, breakdown: {friendly})"
+    def __lt__(self, other: B) -> bool:
+        return self.title < other.title
 
-    def to_org(self, depth: int) -> str:
-        props = {
-            "author": self.author,
-            "series": self.series,
-            "id": hash(self),
-            **self.other_props,
-        }
-        first_line = f"""{'*' * depth}{' ' + self.status.value if self.status else ''} {self.title} [/]"""
-        props_lines = f"""{write_properties(props)}"""
-        body_lines = f"""{self.body if self.body else ''}"""
-        return (
-            first_line
-            + props_lines
-            + body_lines
-            + "\n".join([a.to_org(depth + 1) for a in self.annotations])
+    def __eq__(self, other: B) -> bool:
+        return self.title == other.title
+
+    # def __repr__(self):
+    #     atypes = [
+    #         i.name
+    #         for i in sorted([i.atype for i in self.annotations], key=lambda a: a.value)
+    #     ]
+    #     groups = groupby(atypes)
+    #     friendly = {k: len(list(g)) for k, g in groups}
+    #     return f"Book(title: {self.title}, total: {len(atypes)}, breakdown: {friendly})"
+
+    def calc_progress(self) -> Progress:
+        return Progress(
+            num=len(
+                [i for i in self.annotations if i.status in [Todo.Done, Todo.Checked]]
+            ),
+            denom=len(self.annotations),
         )
 
-    def _merge(self, other: Book) -> None:
+    def to_org(self, depth: int) -> str:
+        this = copy(self)
+        this.heading = this.title
+        this.level = depth
+        this.show_progress = True
+        this.properties["author"] = this.author
+        this.properties["series"] = this.series
+        this.properties["creation_date"] = this.creation_date
+        sorted_children = sorted(this.annotations)
+        children = "\n".join([a.to_org(depth + 1) for a in sorted_children])
+        if this.author == "John Bolton;":
+            assert "intellectually" in children
+        return super(Book, this).__str__() + "\n" + children
+
+    def merge(self, other: Book) -> None:
         self_set: Set[Annotation] = set(self.annotations)
         other_set: Set[Annotation] = set(other.annotations)
 
@@ -516,7 +404,7 @@ class Book(BaseOrg):
         self.annotations = results
 
     @classmethod
-    def from_org(cls: Type[U], node: OrgNode) -> U:
+    def from_org(cls: Type[B], node: OrgNode) -> B:
         annotations: List[Annotation] = [
             Annotation.from_org(anode) for anode in node.children
         ]
@@ -528,26 +416,27 @@ class Book(BaseOrg):
                 del node.properties[p]
             except KeyError:
                 pass
-        status, book_title = parse_todo(node)
-        book: U = cls(
-            title=book_title,
+        status, heading = super().parse_heading(node)
+        book: B = cls(
+            title=heading,
             author=author,
             series=series,
             annotations=annotations,
             body=body,
             status=status,
-            other_props=node.properties,
+            properties=node.properties,
         )
         return book
 
 
-V = TypeVar("V", bound="Author")
+A = TypeVar("A", bound="Author")
 
 
 @dataclass
 class Author(BaseOrg):
     author_name: AuthorName = ""
     books: Dict[BookTitle, Book] = field(default_factory=dict)
+    creation_date: Optional[EmacsDateTime] = None
     body: Optional[str] = None
 
     def __hash__(self):
@@ -555,26 +444,47 @@ class Author(BaseOrg):
         fields = [self.author_name, self.body, self.status.name, self.body]
         for field in fields:
             m.update(utf8(field))
-        for key, value in self.other_props.items():
+        for key, value in self.properties.items():
             m.update(utf8(key + str(value)))
         for b in self.books:
             bh = hash(b)
             m.update(utf8(bh))
         return int(m.hexdigest(), 16)
 
+    def __lt__(self, other: A) -> bool:
+        return self.author_name < other.author_name
+
+    def __eq__(self, other: A) -> bool:
+        return self.author_name == other.author_name
+
     def to_org(self) -> str:
-        depth = 1
-        headline = f"""*{' ' + self.status.value if self.status.value else ''} {self.author_name}"""
-        properties = f"{write_properties(self.other_props)}"
-        bodyline = f"{self.body if self.body else ''}"
-        return (
-            headline
-            + properties
-            + bodyline
-            + "\n".join([b.to_org(depth + 1) for b in self.books.values()])
+        this = copy(self)
+        this.level = 1
+        this.progress = self.calc_progress()
+        this.show_progress = True
+        this.heading = this.author_name
+        this.properties["creation_date"] = this.creation_date
+        sorted_children = sorted([b for b in self.books.values()])
+        children = "\n".join([b.to_org(this.level + 1) for b in sorted_children])
+        return super(Author, this).__str__() + "\n" + children
+
+    def calc_progress(self) -> Progress:
+        num, denom = 0, 0
+        for book in self.books.values():
+            book.progress = book.calc_progress()
+            num += book.progress.num
+            denom += book.progress.denom
+
+        return Progress(num=num, denom=denom)
+
+        return Progress(
+            num=len(
+                [i for i in self.books.values() if i.progress.num != i.progress.denom]
+            ),
+            denom=len(self.books),
         )
 
-    def _merge(self, other: Author) -> None:
+    def merge(self, other: Author) -> None:
         results: Dict[BookTitle, Book] = {}
         if hash(self) != hash(other):
             self_books: Set[BookTitle] = set(self.books.keys())
@@ -588,23 +498,25 @@ class Author(BaseOrg):
             for book in intersection_books:
                 self_book: Book = self.books[book]
                 other_book: Book = other.books[book]
-                combine_book: Book = self_book._merge(other_book)
+                combine_book: Book = self_book.merge(other_book)
                 results[book] = combine_book
 
         self._org_merge(other)
         self.books = results
 
     @classmethod
-    def from_org(cls: Type[V], node: OrgNode) -> V:
-        child_books: Dict[BookTitle, Book] = {
-            bnode.heading: Book.from_org(bnode) for bnode in node.children
-        }
-        author: V = cls(
-            author=node.heading,
+    def from_org(cls: Type[A], node: OrgNode) -> A:
+        child_books: Dict[BookTitle, Book] = {}
+        for book_node in node.children:
+            book = Book.from_org(book_node)
+            child_books[book.title] = book
+        status, heading = super().parse_heading(node)
+        author: A = cls(
+            author_name=heading,
             books=child_books,
-            status=parse_todo(node),
+            status=status,
             body=node.body.strip() if node.body.strip() else None,
-            other_props=node.properties,
+            properties=node.properties,
         )
         return author
 
@@ -613,6 +525,8 @@ Authors = Dict[AuthorName, Author]
 
 
 def page_or_location(s: str) -> Union[PageRange, LocationRange]:
+    if not s:
+        return None
     last = s.split(" ")[-1]
     ls = last.split("-")
 
@@ -630,14 +544,13 @@ def page_or_location(s: str) -> Union[PageRange, LocationRange]:
 
 
 def get_title_author_series(s: str,) -> Tuple[BookTitle, AuthorName, Optional[Series]]:
-    # NOTE This is vulnerable to parens in titles
     # Match everything until parentheses, or until end
     author: Optional[AuthorName] = None
     series: Optional[Series] = None
-    title = re_findall(r"(^[^\(]+)", s)[0].strip()
+    title = re.findall(r"(^[^\(]+)", s)[0].strip()
     # Match all things inside parens, returning a list
     regex = r"\(([^\)]+)\)"
-    author_series = re_findall(regex, s)
+    author_series = re.findall(regex, s)
 
     if len(author_series) == 1:
         author = author_series[0]
@@ -651,23 +564,29 @@ def get_title_author_series(s: str,) -> Tuple[BookTitle, AuthorName, Optional[Se
     return title, author, series
 
 
-def get_date(s: str) -> DateTime:
-    return datetime.strptime(s, "Added on %A, %B %d, %Y %I:%M:%S %p")
-
-
 def parse_kindle(file_str: str) -> Authors:
-    sections: List[str] = file_str.split(KINDLE_SEPARATOR)
+    sections: List[str] = file_str.split(KINDLE_SEPARATOR)[:-1]
+
+    # TODO Just so it's defined, this is ugly, make it optional, figure out how it differs from `current`
+    annotation: Annotation = Annotation()
 
     results: List[Annotation] = []
     prev: Optional[Annotation] = None
 
     curr_already_added: bool = False
+    is_collated: bool = False
 
     for section in sections:
         filtered: str = "\n".join([i for i in section.split("\n") if i])
         annotation: Annotation = Annotation.from_kindle(filtered)
 
-        is_collated, current = annotation._merge_note_with_highlight(prev)
+        is_collated, current = annotation.merge_note_with_highlight(prev)
+
+        # if "intellectually" in filtered:
+        #     print(filtered)
+        #     print(annotation.__repr__())
+        #     print(is_collated)
+        #     print(current.__repr__())
 
         if not is_collated:
             if prev and not curr_already_added:
@@ -691,10 +610,11 @@ def parse_kindle(file_str: str) -> Authors:
         book = Book(title=title, author=author, series=series, annotations=g)
         books.append(book)
 
-    authors: Dict[str, Author] = {}
+    authors: Dict[AuthorName, Author] = {}
     for book in books:
         if book.author in authors:
-            author.books[book.title] = book
+            current_author = authors[book.author]
+            current_author.books[book.title] = book
         else:
             author = Author(author_name=book.author)
             author.books[book.title] = book
@@ -707,7 +627,7 @@ def parse_org(file_str: str) -> Authors:
     root = org_loads(file_str)
     authors: Authors = {}
 
-    for author_node in root:
+    for author_node in root.children:
         author = Author.from_org(author_node)
 
         authors[author.author_name] = author
@@ -715,27 +635,69 @@ def parse_org(file_str: str) -> Authors:
     return authors
 
 
+def merge_files(left: Authors, right: Authors) -> Authors:
+    results: Authors = {}
+
+    left_names: Set[AuthorName] = set(left.keys())
+    right_names: Set[AuthorName] = set(right.keys())
+
+    for author_name in left_names.symmetric_difference(right_names):
+        results[author_name] = left.get(author_name, right[author_name])
+
+    for author_name in left_names.intersection(right_names):
+        left_author: Author = left[author_name]
+        right_author: Author = right[author_name]
+
+        combined: Author = left_author.merge(right_author)
+        results[author_name] = combined
+
+    return results
+
+
 # Notes always come before their highlight
+def main(argv):
+    try:
+        opts, args = getopt.getopt(argv, "hk:o:", ["kindle=", "org="])
+    except getopt.GetoptError as goe:
+        print("kindle_to_org -k <kindle_file> -o <org_file>")
+        print(goe)
+        sys.exit(2)
+
+    for opt, arg in opts:
+        if opt == "-h":
+            print("kindle_to_org -k <kindle_file> -o <org_file>")
+        elif opt in ("-k", "--kindle"):
+            kindle_file = arg
+        elif opt in ("-o", "--org"):
+            org_file = arg
+
+    try:
+        with open(kindle_file, "r") as kf:
+            kindle_string = kf.read()
+    except Exception as e:
+        print(f"Kindle file {kindle_file} was not readable: {e}")
+        print("Exiting.")
+        sys.exit(2)
+
+    try:
+        with open(org_file, "r") as of:
+            org_string = of.read()
+    except Exception as e:
+        print(f"Org file {org_file} not found, writing new one.")
+        org_string = ""
+
+    org_data: Authors = parse_org(org_string)
+    kindle_data: Authors = parse_kindle(kindle_string)
+
+    merged_data: Authors = merge_files(org_data, kindle_data)
+
+    sorted_merged = sorted([a for a in merged_data.values()])
+    output: str = "\n".join([author.to_org() for author in sorted_merged])
+    assert "intellectually" in output
+
+    with open(org_file, "w") as ofw:
+        ofw.write(output)
+
+
 if __name__ == "__main__":
-    with open(file_location, mode="r") as f:
-        fil = f.read()
-        # Something to do with how Kindle saves files (endianess)
-        # See https://stackoverflow.com/questions/17912307/u-ufeff-in-python-string/17912811#17912811
-        fil = fil.replace("\ufeff", "")
-        sections = fil.split("==========")[0:-1]
-
-    authors = collect_authors(sections)
-
-    # try:
-    #     with open("hashes.json", "r") as f:
-    #         extant_hashes = json.load(f)
-    # except:
-    #     extant_hashes = {}
-
-    # with open("hashes.json", "w") as f:
-    #     json.dump(hashes, f, indent=4)
-
-    out_str = "\n".join([author.to_org() for author in authors.values()])
-    with open("books.org", "w") as f:
-        f.write(out_str)
-        pass
+    main(sys.argv[1:])
