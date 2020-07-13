@@ -7,6 +7,7 @@ verify_ssl = true
 pytest = "*"
 jedi = "15.2"
 python-language-server = "0.34.1"
+mypy = "*"
 
 
 [packages]
