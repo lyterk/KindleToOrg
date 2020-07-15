@@ -37,7 +37,7 @@ class EmacsDate(date):
 
     @classmethod
     def org_strptime(cls: Type[Z], s: str) -> Z:
-        return cls.strptime(s, EMACS_DATE)
+        return datetime.strptime(s, EMACS_DATE).date()
 
 
 S = TypeVar("S", bound="Todo")
@@ -121,18 +121,23 @@ class BaseOrg:
     tags: Set[str] = field(default_factory=set)
 
     def __str__(self) -> str:
-        gapped_status = " " + self.status.value if self.status else ""
+        if self.status:
+            gapped_status = " " + self.status.value + " " if self.status.value else " "
+        else:
+            gapped_status = " "
         gapped_progress = (
             " " + str(self.progress) if self.progress and self.show_progress else ""
         )
         body = "\n" + self.body if self.body else ""
         first_line = (
-            f"""{'*' * self.level}{gapped_status} {self.heading}{gapped_progress}"""
+            f"""{'*' * self.level}{gapped_status}{self.heading}{gapped_progress}"""
         )
         return first_line + "\n" + self.write_properties() + body
 
     @classmethod
     def parse_heading(cls: Type[W], node: OrgNode) -> Tuple[Todo, str]:
+        status = Todo.NoTodo
+
         def check_match(s: str) -> Todo:
             if s == " ":
                 return Todo.Unchecked

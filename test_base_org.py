@@ -4,6 +4,14 @@ from base_org import *
 from orgparse import loads as org_loads
 
 
+def test_emacs_dates():
+    time = "[2020-01-02 Thu 21:34]"
+    date = "<2020-07-12 Sun>"
+
+    assert EmacsDateTime.org_strptime(time).month == 1
+    assert EmacsDate.org_strptime(date).day == 12
+
+
 def test_write_properties():
     props = {"prop_a": 1, "prop_b": "hello"}
     b = BaseOrg(properties=props)

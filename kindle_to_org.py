@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+from pprint import pprint  # TODO
+
 import getopt
 import re
 import sys
@@ -69,6 +71,20 @@ class Annotation(BaseOrg):
     creation_date: EmacsDateTime = datetime.now()
     selection: Optional[str] = None
     my_note: Optional[str] = None
+
+    def __str__(self) -> str:
+        return (
+            "Annotation("
+            + f"atype={self.atype.value}, "
+            + f"title={self.title}, "
+            + f"author={self.author}, "
+            + f"series={self.series}, "
+            + f"page_number={self.page_number}, "
+            + f"location={self.location}, "
+            + f"creation_date={self.creation_date}, "
+            + f"selection={self.selection}, "
+            + f"my_note={self.my_note})"
+        )
 
     def __lt__(self, other: N) -> bool:
         """For sorting"""
@@ -273,7 +289,7 @@ class Annotation(BaseOrg):
         author: AuthorName = props.get("AUTHOR")
         series: Optional[Series] = props.get("SERIES")
         try:
-            creation_date: EmacsDateTime = datetime.fromisoformat(
+            creation_date: EmacsDateTime = EmacsDateTime.org_strptime(
                 props.get("CREATION_DATE")
             )
         except:
@@ -301,7 +317,7 @@ class Annotation(BaseOrg):
             except KeyError:
                 pass
         return cls(
-            atype=status,
+            atype=atype,
             title=title,
             author=author,
             series=series,
@@ -326,7 +342,10 @@ class Book(BaseOrg):
     series: Optional[Series] = None
     annotations: List[Annotation] = field(default_factory=list)
 
-    def __hash__(self):
+    def __str__(self) -> str:
+        return f"Book(title={self.title}, author={self.author}, series={self.series})"
+
+    def __hash__(self) -> int:
         m = md5()
         for n in [self.title, self.author, self.series, self.body]:
             m.update(utf8(n))
@@ -435,11 +454,14 @@ class Author(BaseOrg):
     author_name: AuthorName = ""
     books: Dict[BookTitle, Book] = field(default_factory=dict)
     creation_date: Optional[EmacsDateTime] = None
-    body: Optional[str] = None
+
+    def __str__(self):
+        return f"Author(author_name={self.author_name}, creation_date={self.creation_date})"
 
     def __hash__(self):
         m = md5()
-        fields = [self.author_name, self.body, self.status.name, self.body]
+        status = self.status.value if self.status else ""
+        fields = [self.author_name, self.body, status, self.body]
         for field in fields:
             m.update(utf8(field))
         for key, value in self.properties.items():
@@ -490,14 +512,21 @@ class Author(BaseOrg):
 
             symdiff_books = self_books.symmetric_difference(other_books)
             for book in symdiff_books:
-                results[book] = self.books.get(book, other.books[book])
+                symbook = self.books.get(book, other.books[book])
+                results[book] = symbook
+                print(symbook)
 
             intersection_books: Set[BookTitle] = self_books.intersection(other_books)
+
             for book in intersection_books:
                 self_book: Book = self.books[book]
                 other_book: Book = other.books[book]
-                combine_book: Book = self_book.merge(other_book)
-                results[book] = combine_book
+                self_book.merge(other_book)
+                results[book] = self_book
+
+            self.books = results
+        else:
+            results = self.books
 
         self._org_merge(other)
         self.books = results
@@ -580,12 +609,6 @@ def parse_kindle(file_str: str) -> Authors:
 
         is_collated, current = annotation.merge_note_with_highlight(prev)
 
-        # if "intellectually" in filtered:
-        #     print(filtered)
-        #     print(annotation.__repr__())
-        #     print(is_collated)
-        #     print(current.__repr__())
-
         if not is_collated:
             if prev and not curr_already_added:
                 results.append(prev)
@@ -641,14 +664,16 @@ def merge_files(left: Authors, right: Authors) -> Authors:
     right_names: Set[AuthorName] = set(right.keys())
 
     for author_name in left_names.symmetric_difference(right_names):
-        results[author_name] = left.get(author_name, right[author_name])
+        author = left.get(author_name, right[author_name])
+        results[author_name] = author
 
     for author_name in left_names.intersection(right_names):
+        # Problem is here.
         left_author: Author = left[author_name]
         right_author: Author = right[author_name]
 
-        combined: Author = left_author.merge(right_author)
-        results[author_name] = combined
+        left_author.merge(right_author)
+        results[author_name] = left_author
 
     return results
 

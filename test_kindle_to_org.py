@@ -613,3 +613,13 @@ def test_empty_files():
 
     assert parse_kindle(empty_file_str) == {}
     assert parse_org(empty_file_str) == {}
+
+
+def test_merge_authors():
+    with open("test_cases/author_test_case.org", "r") as f:
+        file_str = f.read()
+
+    left_authors = parse_org(file_str)
+    right_authors = parse_org(file_str)
+
+    assert merge_files(left_authors, right_authors) != left_authors
