@@ -627,3 +627,56 @@ def test_merge_authors():
     right_authors = parse_org(file_str)
 
     assert merge_files(left_authors, right_authors) == left_authors
+
+
+def test_multiline_kindle():
+    s = """Post Captain (Patrick O'Brian)
+- Your Note on page 282 | Location 4323 | Added on Monday, June 15, 2020 1:07:22 AM
+
+Char
+midshian"""
+    actual = Annotation.from_kindle(s)
+    print(actual)
+    d = EmacsDateTime.org_strptime("[2020-06-15 Mon 01:07]")
+    expected = Annotation(
+        atype=AType.Note,
+        title="Post Captain",
+        author="Patrick O'Brian",
+        series=None,
+        page_number=(282, None),
+        location=(4323, None),
+        creation_date=d,
+        selection=None,
+        status=Todo.Unchecked,
+        my_note="Char[ |n| ]midshian",
+    )
+    assert actual == expected
+
+
+def test_multiline_org():
+    s = """* [ ] Note
+:PROPERTIES:
+:AUTHOR: Patrick O'Brian
+:CREATION_DATE: [2020-06-15 Mon 01:07]
+:HIGHLIGHT: Parslow
+:LOCATION: 4323-4323
+:NOTE: Char
+midshian
+:PAGE: 282
+:TITLE: Post Captain
+:END:"""
+    n = org_loads(s).children[0]
+    actual = Annotation.from_org(n)
+    d = EmacsDateTime.org_strptime("[2020-06-15 Mon 01:07]")
+    expected = Annotation(
+        atype=AType.Note,
+        title="Post Captain",
+        author="Patrick O'Brian",
+        series=None,
+        page_number=(282, None),
+        location=(4323, 4323),
+        creation_date=d,
+        selection="Parslow",
+        my_note="Char",
+    )
+    assert actual == expected
