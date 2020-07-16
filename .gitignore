@@ -6,3 +6,6 @@ __pycache__/
 Pipfile.lock
 .dir-locals.el
 books.org
+*.spec
+build/
+dist/
