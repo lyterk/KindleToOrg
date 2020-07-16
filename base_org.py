@@ -5,11 +5,12 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, date
 from enum import Enum
+from hashlib import md5
 from orgparse.node import OrgNode
 from typing import Type, TypeVar, Optional, List, Dict, Any, Set, Tuple
 
 from static import EMACS_DATE, KINDLE_TIME, EMACS_TIME
-from utility_functions import head
+from utility_functions import head, utf8
 
 
 Y = TypeVar("Y", bound="EmacsDateTime")
@@ -119,6 +120,25 @@ class BaseOrg:
     important_times: List[OrgTime] = field(default_factory=list)
     properties: Dict[str, Any] = field(default_factory=dict)
     tags: Set[str] = field(default_factory=set)
+
+    def __hash__(self) -> int:
+        m = md5()
+        for f in [
+            self.heading,
+            self.status,
+            self.body,
+            self.org_time,
+            self.creation_date,
+            self.level,
+            self.progress,
+            self.show_progress,
+            str(self.important_times),
+            str(self.tags),
+        ]:
+            m.update(utf8(f))
+        for k, v in self.properties.items():
+            m.update(utf8(str(k) + str(v)))
+        return int(m.hexdigest(), 16)
 
     def __str__(self) -> str:
         if self.status:

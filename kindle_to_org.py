@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, date
 from enum import Enum
 from fractions import Fraction
-from hashlib import sha256, md5
+from hashlib import md5
 from itertools import islice, groupby
 from math import inf
 from orgparse import loads as org_loads
@@ -136,6 +136,7 @@ class Annotation(BaseOrg):
 
     def __hash__(self) -> int:
         m = md5()
+        org_hash = super().__hash__()
         for f in [
             self.page_number,
             self.location,
@@ -145,6 +146,7 @@ class Annotation(BaseOrg):
             self.creation_date,
             self.status.name,
             self.body,
+            org_hash,
         ]:
             m.update(utf8(f))
         for k, v in self.properties.items():
@@ -347,7 +349,8 @@ class Book(BaseOrg):
 
     def __hash__(self) -> int:
         m = md5()
-        for n in [self.title, self.author, self.series, self.body]:
+        org_hash = super().__hash__()
+        for n in [self.title, self.author, self.series, self.body, org_hash]:
             m.update(utf8(n))
         for a in self.annotations:
             ah = hash(a)
@@ -359,15 +362,6 @@ class Book(BaseOrg):
 
     def __eq__(self, other: B) -> bool:
         return self.title == other.title
-
-    # def __repr__(self):
-    #     atypes = [
-    #         i.name
-    #         for i in sorted([i.atype for i in self.annotations], key=lambda a: a.value)
-    #     ]
-    #     groups = groupby(atypes)
-    #     friendly = {k: len(list(g)) for k, g in groups}
-    #     return f"Book(title: {self.title}, total: {len(atypes)}, breakdown: {friendly})"
 
     def calc_progress(self) -> Progress:
         return Progress(
@@ -420,6 +414,14 @@ class Book(BaseOrg):
         self._org_merge(other)
         self.annotations = results
 
+    def _get_creation_date(self) -> Optional[EmacsDateTime]:
+        if self.annotations:
+            return min(
+                [anno.creation_date for anno in self.annotations if anno.creation_date]
+            )
+        else:
+            return None
+
     @classmethod
     def from_org(cls: Type[B], node: OrgNode) -> B:
         annotations: List[Annotation] = [
@@ -438,10 +440,11 @@ class Book(BaseOrg):
             title=heading,
             author=author,
             series=series,
-            annotations=annotations,
+            creation_date=self._get_creation_date(),
             body=body,
             status=status,
             properties=node.properties,
+            annotations=annotations,
         )
         return book
 
@@ -453,15 +456,14 @@ A = TypeVar("A", bound="Author")
 class Author(BaseOrg):
     author_name: AuthorName = ""
     books: Dict[BookTitle, Book] = field(default_factory=dict)
-    creation_date: Optional[EmacsDateTime] = None
 
     def __str__(self):
-        return f"Author(author_name={self.author_name}, creation_date={self.creation_date})"
+        return f"Author(author_name={self.author_name})"
 
     def __hash__(self):
         m = md5()
-        status = self.status.value if self.status else ""
-        fields = [self.author_name, self.body, status, self.body]
+        org_hash = super().__hash__()
+        fields = [self.author_name, self.body, self.body, org_hash]
         for field in fields:
             m.update(utf8(field))
         for key, value in self.properties.items():
@@ -514,7 +516,6 @@ class Author(BaseOrg):
             for book in symdiff_books:
                 symbook = self.books.get(book, other.books[book])
                 results[book] = symbook
-                print(symbook)
 
             intersection_books: Set[BookTitle] = self_books.intersection(other_books)
 
@@ -531,6 +532,12 @@ class Author(BaseOrg):
         self._org_merge(other)
         self.books = results
 
+    def _get_creation_date(self) -> Optional[EmacsDateTime]:
+        if self.books:
+            return min([book.creation_date for book in self.books.values()])
+        else:
+            return None
+
     @classmethod
     def from_org(cls: Type[A], node: OrgNode) -> A:
         child_books: Dict[BookTitle, Book] = {}
@@ -542,6 +549,7 @@ class Author(BaseOrg):
             author_name=heading,
             books=child_books,
             status=status,
+            creation_date=self._get_creation_date(),
             body=node.body.strip() if node.body.strip() else None,
             properties=node.properties,
         )
@@ -641,6 +649,11 @@ def parse_kindle(file_str: str) -> Authors:
             author = Author(author_name=book.author)
             author.books[book.title] = book
             authors[author.author_name] = author
+
+    for author in authors.values():
+        for book in author.books.values():
+            book.creation_date = book._get_creation_date()
+        author.creation_date = author._get_creation_date()
 
     return authors
 
