@@ -5,32 +5,24 @@ import getopt
 import re
 import sys
 
-from collections import defaultdict
 from copy import copy
 from dataclasses import dataclass, field
 from datetime import datetime, date
 from enum import Enum
 from fractions import Fraction
 from hashlib import md5
-from itertools import islice, groupby
-from math import inf
+from itertools import groupby
 from orgparse import loads as org_loads
 from orgparse.node import OrgNode
-from os import path, environ
-from pathlib import Path
 from typing import (
     List,
     Dict,
     Tuple,
     Optional,
     Union,
-    Iterable,
     Set,
-    Any,
     TypeVar,
     Type,
-    Callable,
-    ByteString,
 )
 from shutil import copyfile
 
@@ -66,8 +58,8 @@ class Annotation(BaseOrg):
     series: Optional[Series] = None
     page_number: Optional[PageRange] = None
     location: Optional[LocationRange] = None
-    # Ignore this datetime.now, it never applies.
-    creation_date: EmacsDateTime = datetime.now()
+    # Not optional, but a default value isn't meaningful.
+    creation_date: EmacsDateTime = None  # typing: ignore
     selection: Optional[str] = None
     my_note: Optional[str] = None
 
