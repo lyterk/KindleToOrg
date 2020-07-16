@@ -1,0 +1,18 @@
+#+TITLE: README
+
+* Explanation
+This project converts kindle clippings files into hierarchically organized Emacs org-mode files, where the notes, highlights, and annotations are collected under author -> book headings. The properties of the annotation (page number, date created, etc) are stored as org-mode properties.
+
+This project also merges in other things typed in in the org file, assuming they follow the same author -> book -> annotation format. Simply put, I merge using the author's name, book title, page number, and location, and then glue all notes and scribblings together. If your org project is stored in git, you should find your book notes stored in such a way where you can separate your sessions, and combine paper book notes with Kindle notes.
+
+The project also copies the clippings file from the kindle, if you want that to happen.
+
+* Usage
+** Merge from kindle file on disk
+#+BEGIN_SRC shell
+python3 kindle_to_org.py -k ~/org/resources/kindle_clippings.txt -o ~/org/books.org
+#+END_SRC
+** Merge while copying from mounted Kindle to disk
+#+BEGIN_SRC shell
+python3 kindle_to_org.py  -m /media/lyterk/Kindle/documents/My\ Clippings.txt -k ~/org/resources/kindle_clippings.txt -o ~/org/books.org
+#+END_SRC
