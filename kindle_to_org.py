@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-from pprint import pprint  # TODO
-
 import getopt
 import re
 import sys
@@ -34,6 +32,7 @@ from typing import (
     Callable,
     ByteString,
 )
+from shutil import copyfile
 
 from base_org import BaseOrg, EmacsDateTime, EmacsDate, Todo, Progress
 from static import (
@@ -75,15 +74,15 @@ class Annotation(BaseOrg):
     def __str__(self) -> str:
         return (
             "Annotation("
-            + f"atype={self.atype.value}, "
-            + f"title={self.title}, "
-            + f"author={self.author}, "
-            + f"series={self.series}, "
+            + f"atype=AType.{self.atype.value}, "
+            + f'title="{self.title}", '
+            + f'author="{self.author}", '
+            + f'series="{self.series}", '
             + f"page_number={self.page_number}, "
             + f"location={self.location}, "
-            + f"creation_date={self.creation_date}, "
-            + f"selection={self.selection}, "
-            + f"my_note={self.my_note})"
+            + f'creation_date="{self.creation_date}", '
+            + f'selection="{self.selection}", '
+            + f'my_note="{self.my_note}")'
         )
 
     def __lt__(self, other: N) -> bool:
@@ -216,9 +215,9 @@ class Annotation(BaseOrg):
             remaining = [i for i in lines[2:] if i]
 
         if atype == AType.Note:
-            my_note = "\n".join(remaining).strip() if remaining else None
+            my_note = "[ |n| ]".join(remaining).strip() if remaining else None
         elif atype == AType.Highlight:
-            selection = "\n".join(remaining).strip() if remaining else None
+            selection = "[ |n| ]".join(remaining).strip() if remaining else None
 
         if len(metadata_items) == 2:
             creation_date = EmacsDateTime.kindle_strptime(metadata_items[1])
@@ -414,10 +413,13 @@ class Book(BaseOrg):
         self._org_merge(other)
         self.annotations = results
 
-    def _get_creation_date(self) -> Optional[EmacsDateTime]:
-        if self.annotations:
+    @classmethod
+    def _get_creation_date(
+        self, annotations: List[Annotation]
+    ) -> Optional[EmacsDateTime]:
+        if annotations:
             return min(
-                [anno.creation_date for anno in self.annotations if anno.creation_date]
+                [anno.creation_date for anno in annotations if anno.creation_date]
             )
         else:
             return None
@@ -440,10 +442,10 @@ class Book(BaseOrg):
             title=heading,
             author=author,
             series=series,
-            creation_date=self._get_creation_date(),
+            creation_date=cls._get_creation_date(annotations),
             body=body,
             status=status,
-            properties=node.properties,
+            properties={key.lower(): value for key, value in node.properties.items()},
             annotations=annotations,
         )
         return book
@@ -532,9 +534,12 @@ class Author(BaseOrg):
         self._org_merge(other)
         self.books = results
 
-    def _get_creation_date(self) -> Optional[EmacsDateTime]:
-        if self.books:
-            return min([book.creation_date for book in self.books.values()])
+    @classmethod
+    def _get_creation_date(
+        self, books: Dict[BookTitle, Book]
+    ) -> Optional[EmacsDateTime]:
+        if books:
+            return min([book.creation_date for book in books.values()])
         else:
             return None
 
@@ -549,9 +554,9 @@ class Author(BaseOrg):
             author_name=heading,
             books=child_books,
             status=status,
-            creation_date=self._get_creation_date(),
+            creation_date=cls._get_creation_date(child_books),
             body=node.body.strip() if node.body.strip() else None,
-            properties=node.properties,
+            properties={key.lower(): value for key, value in node.properties.items()},
         )
         return author
 
@@ -652,8 +657,8 @@ def parse_kindle(file_str: str) -> Authors:
 
     for author in authors.values():
         for book in author.books.values():
-            book.creation_date = book._get_creation_date()
-        author.creation_date = author._get_creation_date()
+            book.creation_date = book._get_creation_date(book.annotations)
+        author.creation_date = author._get_creation_date(author.books)
 
     return authors
 
@@ -691,22 +696,47 @@ def merge_files(left: Authors, right: Authors) -> Authors:
     return results
 
 
+def clean_kindle_string(file_str: str) -> str:
+    char_ = r"^Char\\n"
+    nid = r"^NID\\n"
+    no_char = re.sub(char_, "", file_str)
+    return re.sub(nid, "", no_char)
+
+
 # Notes always come before their highlight
 def main(argv):
     try:
-        opts, args = getopt.getopt(argv, "hk:o:", ["kindle=", "org="])
+        opts, args = getopt.getopt(argv, "hm:k:o:", ["mounted=", "kindle=", "org="])
     except getopt.GetoptError as goe:
-        print("kindle_to_org -k <kindle_file> -o <org_file>")
+        print("kindle_to_org -m <mounted_file> -k <kindle_file> -o <org_file>")
         print(goe)
         sys.exit(2)
 
+    mounted_file, kindle_file, org_file = "", "", ""
     for opt, arg in opts:
         if opt == "-h":
-            print("kindle_to_org -k <kindle_file> -o <org_file>")
+            print("kindle_to_org -m <mounted_file> -k <kindle_file> -o <org_file>")
+        elif opt in ("-m", "--mounted"):
+            mounted_file = arg
         elif opt in ("-k", "--kindle"):
             kindle_file = arg
+            if not kindle_file:
+                print("kindle_file is necessary for this script to run")
+                sys.exit(2)
         elif opt in ("-o", "--org"):
             org_file = arg
+            if not org_file:
+                print("kindle_file is necessary for this script to run")
+                sys.exit(2)
+        else:
+            print(f"{opt} is not a valid argument")
+
+    if mounted_file:
+        try:
+            copyfile(mounted_file, kindle_file)
+        except Exception as e:
+            print("Copying mounted file failed with exception {e}")
+            sys.exit(2)
 
     try:
         with open(kindle_file, "r") as kf:
